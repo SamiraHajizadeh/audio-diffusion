@@ -140,7 +140,8 @@ def main(args):
             model = UNet2DConditionModel(
                 sample_size=resolution if vqvae is None else latent_resolution,
                 in_channels=1 if vqvae is None else vqvae.config["latent_channels"],
-                out_channels=1 if vqvae is None else vqvae.config["latent_channels"],
+                # out_channels=1 if vqvae is None else vqvae.config["latent_channels"],
+                out_channels = args.num_train_steps + 2,
                 layers_per_block=2,
                 block_out_channels=(128, 256, 512, 512),
                 down_block_types=(
