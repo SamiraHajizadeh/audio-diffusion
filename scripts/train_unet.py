@@ -253,10 +253,25 @@ def main(args):
             with accelerator.accumulate(model):
                 # Predict the noise residual
                 if args.encodings is not None:
-                    noise_pred = model(noisy_images, timesteps, batch["encoding"])["sample"]
+                    logits = model(noisy_images, timesteps, batch["encoding"])["sample"]
                 else:
-                    noise_pred = model(noisy_images, timesteps)["sample"]
-                loss = F.mse_loss(noise_pred, noise)
+                    logits = model(noisy_images, timesteps)["sample"]
+
+                logits = logits.mean(dim=(2, 3)) ## GPT's recommendation
+                ce_loss = F.cross_entropy(logits, timesteps)
+                y = torch.sum(logits[:, -1] - torch.gather(logits, 1, timesteps.view(-1, 1)).squeeze(1))
+
+                noisy_images.requires_grad = True
+                x_grad = torch.autograd.grad(y, noisy_images, create_graph=True)[0]
+
+                alpha_hat = noise_scheduler.alphas_cumprod.to(noisy_images.device)
+                sigma = torch.sqrt(1. - alpha_hat[timesteps])[:, None, None, None]
+                eps_pred = sigma * (x_grad + noisy_images)
+
+                mse_loss = F.mse_loss(eps_pred, noise)
+
+                loss = args.ce_weight * ce_loss + args.mse_weight * mse_loss
+
                 accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
@@ -419,6 +434,8 @@ if __name__ == "__main__":
         default=None,
         help="picked dictionary mapping audio_file to encoding",
     )
+    parser.add_argument("--ce_weight", type=float, default=1.0, help="Weight for cross-entropy loss.")
+    parser.add_argument("--mse_weight", type=float, default=1.0, help="Weight for MSE noise prediction loss.")
 
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
